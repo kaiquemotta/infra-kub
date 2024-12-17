@@ -90,7 +90,7 @@ data "aws_vpc" "selected" {
 variable "subnet_ids" {
   description = "List of subnet IDs"
   type        = list(string)
-  default     = ["subnet-0d03fd1174a3d8e42", "subnet-0ecf94d2c4e4a095a", "subnet-0e5b69a0f2630bad1", "subnet-0dc6713ec55c68387"]
+  default     = ["subnet-0d03fd1174a3d8e42", "subnet-0e5b69a0f2630bad1"]
 }
 
 resource "aws_eks_cluster" "my_cluster" {
