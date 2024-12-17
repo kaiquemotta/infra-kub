@@ -2,74 +2,83 @@ provider "aws" {
   region = "us-east-1"
 }
 
-resource "null_resource" "check_iam_role_eks_cluster" {
-  provisioner "local-exec" {
-    command = "aws iam get-role --role-name eks_cluster_role_new || echo 'Role does not exist'"
-  }
+# Verificação e Criação do Papel IAM do EKS Cluster
+data "aws_iam_role" "eks_cluster_role_new" {
+  name = "eks_cluster_role_new"
 }
 
 resource "aws_iam_role" "eks_cluster_role_new" {
+  # Só cria o papel se ele não existir
+  count = length(data.aws_iam_role.eks_cluster_role_new.id) == 0 ? 1 : 0
+
   name = "eks_cluster_role_new"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
         Principal = {
           Service = "eks.amazonaws.com"
         }
       }
     ]
   })
-
-  depends_on = [null_resource.check_iam_role_eks_cluster]
 }
 
-resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSClusterPolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-  role       = aws_iam_role.eks_cluster_role_new.name
-}
+resource "null_resource" "create_cluster_policy_attachments" {
+  count = length(aws_iam_role.eks_cluster_role_new) > 0 ? 1 : 0
 
-resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSVPCResourceController" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
-  role       = aws_iam_role.eks_cluster_role_new.name
-}
-
-resource "null_resource" "check_iam_role_eks_node" {
   provisioner "local-exec" {
-    command = "aws iam get-role --role-name eks_node_role_new || echo 'Role does not exist'"
+    command = <<EOT
+      aws iam attach-role-policy --role-name eks_cluster_role_new --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      aws iam attach-role-policy --role-name eks_cluster_role_new --policy-arn arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+    EOT
+  }
+
+  triggers = {
+    cluster_role_created = aws_iam_role.eks_cluster_role_new[count.index].id
   }
 }
 
+# Verificação e Criação do Papel IAM do EKS Node
+data "aws_iam_role" "eks_node_role_new" {
+  name = "eks_node_role_new"
+}
+
 resource "aws_iam_role" "eks_node_role_new" {
+  count = length(data.aws_iam_role.eks_node_role_new.id) == 0 ? 1 : 0
+
   name = "eks_node_role_new"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
         Principal = {
           Service = "ec2.amazonaws.com"
         }
       }
     ]
   })
-
-  depends_on = [null_resource.check_iam_role_eks_node]
 }
 
-resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKSWorkerNodePolicy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-  role       = aws_iam_role.eks_node_role_new.name
-}
+resource "null_resource" "create_node_policy_attachments" {
+  count = length(aws_iam_role.eks_node_role_new) > 0 ? 1 : 0
 
-resource "aws_iam_role_policy_attachment" "eks_node_AmazonEC2ContainerRegistryReadOnly" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-  role       = aws_iam_role.eks_node_role_new.name
+  provisioner "local-exec" {
+    command = <<EOT
+      aws iam attach-role-policy --role-name eks_node_role_new --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      aws iam attach-role-policy --role-name eks_node_role_new --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+    EOT
+  }
+
+  triggers = {
+    node_role_created = aws_iam_role.eks_node_role_new[count.index].id
+  }
 }
 
 # Utilizando uma VPC existente
@@ -86,22 +95,21 @@ variable "subnet_ids" {
 
 resource "aws_eks_cluster" "my_cluster" {
   name     = "my-cluster"
-  role_arn = aws_iam_role.eks_cluster_role_new.arn
+  role_arn = try(aws_iam_role.eks_cluster_role_new[0].arn, data.aws_iam_role.eks_cluster_role_new.arn)
 
   vpc_config {
     subnet_ids = var.subnet_ids
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster_AmazonEKSClusterPolicy,
-    aws_iam_role_policy_attachment.eks_cluster_AmazonEKSVPCResourceController
+    null_resource.create_cluster_policy_attachments,
   ]
 }
 
 resource "aws_eks_node_group" "my_node_group" {
   cluster_name    = aws_eks_cluster.my_cluster.name
   node_group_name = "my-node-group"
-  node_role_arn   = aws_iam_role.eks_node_role_new.arn
+  node_role_arn   = try(aws_iam_role.eks_node_role_new[0].arn, data.aws_iam_role.eks_node_role_new.arn)
   subnet_ids      = var.subnet_ids
 
   scaling_config {
@@ -111,7 +119,6 @@ resource "aws_eks_node_group" "my_node_group" {
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_node_AmazonEKSWorkerNodePolicy,
-    aws_iam_role_policy_attachment.eks_node_AmazonEC2ContainerRegistryReadOnly
+    null_resource.create_node_policy_attachments,
   ]
 }
