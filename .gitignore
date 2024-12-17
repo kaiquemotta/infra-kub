@@ -1,0 +1,17 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.crash
+.terraform/
+override.tf
+override.tf.json
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfvars
+*.zip
+*.log
+
+# Ignore .terraform.lock.hcl (se não quiser versionar o lock file)
+.terraform.lock.hcl
